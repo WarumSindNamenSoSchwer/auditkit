@@ -11,15 +11,53 @@ vorliegt, nicht wie es zu beheben ist.
 ## Installation
 
 ```bash
-git clone <url> ~/Repos/auditkit
-cd ~/Repos/auditkit
+git clone https://github.com/WarumSindNamenSoSchwer/auditkit.git
+cd auditkit
 ./install.sh
 ```
 
-Legt einen Symlink `~/.local/bin/audit` an, sonst nichts.
+Legt einen Symlink `~/.local/bin/audit` an, sonst nichts. Das Werkzeug bleibt
+in dem Ordner, in den du es geklont hast, und **dort landen auch die
+Ergebnisse** (`<auditkit>/audits/`).
+
+Liegt `~/.local/bin` nicht im `PATH`, sagt der Installer es dir. Alternativ
+ohne Installation direkt `./bin/audit` aufrufen.
 
 Voraussetzungen: `python3`, [Claude Code](https://claude.com/claude-code).
 Für PDF genügt ein installierter Chromium-Browser, keine extra Abhängigkeit.
+
+## Erster Lauf
+
+```bash
+audit
+```
+
+Zwei Fragen, dann läuft es:
+
+```
+Was soll geprueft werden?
+  1) Firmware  (Uhr, C/C++)
+  2) App       (Android / iOS / Flutter)
+Auswahl [1/2]: 1
+Projektwurzel [.]: ~/Repos/mein-firmware-projekt
+```
+
+Danach fünf Schritte, zusammen wenige Minuten:
+
+```
+[1/5] Messbare Fakten erheben ...
+      360 Dateien, 1667 Fundstellen in 10 Mustern
+[2/5] Analyse (dauert einige Minuten) ...
+[3/5] Belege pruefen ...
+      Validierung ok: 10 Probleme, 17 Fundstellen
+[4/5] Bericht erzeugen ...
+[5/5] PDF ...
+
+Fertig.
+  .../auditkit/audits/mein-projekt-firmware-2026-10-14/report.pdf
+  ...
+  10 Probleme: 3 kritisch, 4 hoch, 3 mittel
+```
 
 ## Benutzung
 
@@ -29,9 +67,7 @@ Interaktiv:
 audit
 ```
 
-Fragt nach Ziel (Firmware oder App) und Projektwurzel.
-
-Direkt:
+Direkt, ohne Rückfragen:
 
 ```bash
 audit --target fw  --root ~/Repos/mein-firmware-projekt
@@ -41,8 +77,8 @@ audit --target app --root . --open
 | Option | Bedeutung |
 |---|---|
 | `--target fw\|app` | Was geprüft wird |
-| `--root PFAD` | Projektwurzel |
-| `--out PFAD` | Ausgabeordner, Standard `~/Desktop/audits/<name>-<profil>-<datum>` |
+| `--root PFAD` | Projektwurzel, muss ein Git-Repository sein |
+| `--out PFAD` | Anderer Ausgabeordner |
 | `--model NAME` | Modell für die Analyse |
 | `--open` | Bericht danach öffnen |
 | `--no-pdf` | PDF überspringen |
@@ -51,7 +87,21 @@ audit --target app --root . --open
 **Das geprüfte Projekt wird nur gelesen.** Es wird nichts hineingeschrieben
 und nichts verändert.
 
-## Ergebnis
+Passt das Profil nicht zum Projekt, etwa `--target app` auf einem
+C-Firmware-Baum, fragt das Werkzeug nach, bevor es loslegt.
+
+## Wo die Ergebnisse liegen
+
+```
+<auditkit>/audits/<projekt>-<profil>-<datum>/
+```
+
+Also dort, wo du das Repository hingeklont hast. Alle Läufe sammeln sich an
+einem Ort und lassen sich später vergleichen. Ein zweiter Lauf am selben Tag
+überschreibt nichts, er bekommt `-2` angehängt.
+
+`audits/` ist per `.gitignore` ausgeschlossen. Befunde aus fremden Projekten
+landen damit nicht versehentlich in einem öffentlichen Repository.
 
 | Datei | Zweck |
 |---|---|
@@ -60,6 +110,10 @@ und nichts verändert.
 | `register.csv` | Risikoregister, Semikolon-getrennt, 19 CRA-Spalten |
 | `findings.json` | Rohdaten, maschinenlesbar |
 | `facts.json` | die deterministische Messung |
+
+Das CSV ist auf die Spalten einer CRA-Risikoanalyse zugeschnitten und lässt
+sich in ein vorhandenes Risk Register einfügen. UTF-8 mit BOM und Semikolon,
+damit Excel auf deutschen Systemen es direkt richtig öffnet.
 
 ## Wie es arbeitet
 
