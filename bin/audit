@@ -46,7 +46,7 @@ auditkit - Sicherheitsbestandsaufnahme
 Optionen:
   --target fw|app     Was geprueft wird. Ohne Angabe wird gefragt.
   --root PFAD         Projektwurzel. Ohne Angabe wird gefragt.
-  --out PFAD          Ausgabeordner. Standard: ~/Desktop/audits/<name>-<datum>
+  --out PFAD          Ausgabeordner. Standard: <auditkit>/audits/<name>-<profil>-<datum>
   --model NAME        Modell fuer die Analyse. Standard: Projektvoreinstellung.
   --open              Report nach dem Lauf oeffnen.
   --no-pdf            Kein PDF erzeugen.
@@ -123,8 +123,16 @@ fi
 
 NAME="$(basename "$ROOT")"
 STAMP="$(date +%Y-%m-%d)"
-OUT="${OUT:-$HOME/Desktop/audits/$NAME-$PROFILE-$STAMP}"
+# Ergebnisse bleiben im auditkit-Ordner, damit alle Laeufe an einem Ort liegen
+# und spaeter miteinander verglichen werden koennen.
+OUT="${OUT:-$KIT/audits/$NAME-$PROFILE-$STAMP}"
 OUT="${OUT/#\~/$HOME}"
+if [ -d "$OUT" ]; then
+  # gleicher Tag, gleiches Ziel: alten Lauf nicht ueberschreiben
+  n=2
+  while [ -d "${OUT}-$n" ]; do n=$((n + 1)); done
+  OUT="${OUT}-$n"
+fi
 mkdir -p "$OUT" || die "kann Ausgabeordner nicht anlegen: $OUT"
 
 say "Projekt : $ROOT"

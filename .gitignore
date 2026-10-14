@@ -1,4 +1,7 @@
 __pycache__/
 *.pyc
 .DS_Store
-/out/
+
+# Audit-Ergebnisse bleiben lokal. Sie enthalten Pfade, Codezeilen und
+# Schwachstellen fremder Projekte und gehoeren nicht in ein oeffentliches Repo.
+/audits/
