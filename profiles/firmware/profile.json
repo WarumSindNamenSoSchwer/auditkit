@@ -1,0 +1,46 @@
+{
+  "name": "firmware",
+  "label": "Firmware (Uhr, C/C++, Cortex-M)",
+  "source_globs": ["Src/*", "Inc/*", "app.cpp", "app.h", "main.cpp"],
+  "exclude_patterns": [
+    "gecko_sdk",
+    "BoschSensortec",
+    "COINES",
+    "(^|/)Lib/",
+    "(^|/)Dhara/",
+    "bme68x",
+    "bhy",
+    "nanopb",
+    "(^|/)autogen/",
+    "(^|/)build/",
+    "(^|/)Tests?/"
+  ],
+  "detect_markers": [
+    "*.slcp",
+    "linkerfile*.ld",
+    "Src/Hardware",
+    "*.ioc",
+    "CMakeLists.txt"
+  ],
+  "components": [
+    "Hardware",
+    "Firmware",
+    "End-to-End",
+    "Vulnerability Management",
+    "Operations",
+    "Data Protection"
+  ],
+  "context": "Cortex-M firmware in C and C++ on a wrist-worn device used in a clinical study. It records health data from identifiable trial participants, stores it on NAND flash, and transfers it over BLE to a phone app. The BLE radio is a u-blox ANNA-B112 module driven over an AT command interface.",
+  "threat_model": [
+    "Attacker within BLE radio range for a few minutes",
+    "Attacker in physical possession of a watch, with a debug probe, able to desolder the flash",
+    "A malicious or spoofed phone app talking to the watch",
+    "Someone who obtains an OTA image and tries to get modified firmware onto a device"
+  ],
+  "surfaces": [
+    "BLE link security, GATT permissions and pairing",
+    "AT parser and BLE module driver as external input",
+    "protobuf and measurement data path including NAND storage",
+    "build configuration, debug interfaces and the update path"
+  ]
+}

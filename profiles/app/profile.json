@@ -1,0 +1,46 @@
+{
+  "name": "app",
+  "label": "App (Android / iOS / Flutter)",
+  "source_globs": ["*"],
+  "exclude_patterns": [
+    "/build/",
+    "/Pods/",
+    "node_modules",
+    "\\.lock$",
+    "/\\.gradle/",
+    "/DerivedData/",
+    "/vendor/",
+    "\\.(png|jpg|jpeg|gif|svg|webp|ttf|otf|woff2?|mp4|zip|jar|aar)$"
+  ],
+  "detect_markers": [
+    "AndroidManifest.xml",
+    "build.gradle",
+    "build.gradle.kts",
+    "Info.plist",
+    "Podfile",
+    "pubspec.yaml",
+    "package.json"
+  ],
+  "components": [
+    "App",
+    "Backend",
+    "End-to-End",
+    "Vulnerability Management",
+    "Operations",
+    "Data Protection"
+  ],
+  "context": "Companion phone app that pairs with a study watch over BLE, decodes protobuf measurement payloads, stores health data of identifiable clinical trial participants locally, and uploads it to a backend.",
+  "threat_model": [
+    "Attacker within BLE radio range for a few minutes",
+    "Attacker who obtains the participant's phone, possibly unlocked or rooted",
+    "A spoofed watch feeding false data into a participant record",
+    "Accidental exposure of participant identity through logs, crash reports or analytics"
+  ],
+  "surfaces": [
+    "BLE pairing, bonding and key storage",
+    "protobuf decode and payload validation from the device",
+    "health data at rest, backup flags and platform file protection",
+    "participant identity in logs, crash reports and analytics",
+    "backend transfer, certificate validation and authorisation"
+  ]
+}

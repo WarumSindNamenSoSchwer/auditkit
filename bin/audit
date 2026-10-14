@@ -1,0 +1,229 @@
+#!/usr/bin/env bash
+# auditkit - Sicherheitsbestandsaufnahme fuer Firmware und App.
+#
+#   audit                                  interaktiv
+#   audit --target fw --root /pfad         direkt
+#   audit --target app --root . --open     und Report oeffnen
+#
+# Erzeugt report.md, report.pdf, register.csv und findings.json.
+set -uo pipefail
+
+# Symlink aufloesen, damit das Kit auch ueber ~/.local/bin/audit gefunden wird.
+SELF="${BASH_SOURCE[0]}"
+while [ -L "$SELF" ]; do
+  LINK="$(readlink "$SELF")"
+  case "$LINK" in
+    /*) SELF="$LINK" ;;
+    *)  SELF="$(cd "$(dirname "$SELF")" && pwd)/$LINK" ;;
+  esac
+done
+KIT="$(cd "$(dirname "$SELF")/.." && pwd)"
+TARGET=""; ROOT=""; OUT=""; MODEL=""; OPEN=0; NO_PDF=0; QUIET=0
+
+die() { echo "Fehler: $*" >&2; exit 1; }
+say() { [ "$QUIET" -eq 1 ] || echo "$*"; }
+
+# Liest eine Antwort. Nutzt das Terminal, wenn es eines gibt, sonst stdin,
+# damit das Skript auch in einer Pipe oder in CI benutzbar bleibt.
+ask() {
+  local __var="$1" __prompt="$2" __reply=""
+  if [ -r /dev/tty ] && [ -t 1 ]; then
+    printf "%s" "$__prompt" > /dev/tty
+    IFS= read -r __reply < /dev/tty || __reply=""
+  else
+    printf "%s" "$__prompt"
+    IFS= read -r __reply || __reply=""
+  fi
+  printf -v "$__var" "%s" "$__reply"
+}
+
+usage() {
+  cat <<'USAGE'
+auditkit - Sicherheitsbestandsaufnahme
+
+  audit [optionen]
+
+Optionen:
+  --target fw|app     Was geprueft wird. Ohne Angabe wird gefragt.
+  --root PFAD         Projektwurzel. Ohne Angabe wird gefragt.
+  --out PFAD          Ausgabeordner. Standard: ~/Desktop/audits/<name>-<datum>
+  --model NAME        Modell fuer die Analyse. Standard: Projektvoreinstellung.
+  --open              Report nach dem Lauf oeffnen.
+  --no-pdf            Kein PDF erzeugen.
+  --quiet             Weniger Ausgabe.
+  -h, --help          Diese Hilfe.
+
+Das Projekt wird nur gelesen. Es wird nichts hineingeschrieben.
+USAGE
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --target) TARGET="${2:-}"; shift 2 ;;
+    --root)   ROOT="${2:-}";   shift 2 ;;
+    --out)    OUT="${2:-}";    shift 2 ;;
+    --model)  MODEL="${2:-}";  shift 2 ;;
+    --open)   OPEN=1; shift ;;
+    --no-pdf) NO_PDF=1; shift ;;
+    --quiet)  QUIET=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "unbekannte Option: $1" ;;
+  esac
+done
+
+command -v claude >/dev/null || die "claude nicht gefunden. Claude Code installieren."
+command -v python3 >/dev/null || die "python3 nicht gefunden."
+
+# ---------------------------------------------------------------- interaktiv
+if [ -z "$TARGET" ]; then
+  echo "Was soll geprueft werden?"
+  echo "  1) Firmware  (Uhr, C/C++)"
+  echo "  2) App       (Android / iOS / Flutter)"
+  ask sel "Auswahl [1/2]: "
+  case "$sel" in
+    1|fw|firmware) TARGET="fw" ;;
+    2|app)         TARGET="app" ;;
+    *) die "ungueltige Auswahl" ;;
+  esac
+fi
+case "$TARGET" in
+  fw|firmware) PROFILE="firmware" ;;
+  app)         PROFILE="app" ;;
+  *) die "--target muss fw oder app sein" ;;
+esac
+
+PROFILE_JSON="$KIT/profiles/$PROFILE/profile.json"
+[ -f "$PROFILE_JSON" ] || die "Profil fehlt: $PROFILE_JSON"
+
+if [ -z "$ROOT" ]; then
+  ask ROOT "Projektwurzel [.]: "
+  ROOT="${ROOT:-.}"
+fi
+ROOT="${ROOT/#\~/$HOME}"
+[ -d "$ROOT" ] || die "Verzeichnis existiert nicht: $ROOT"
+ROOT="$(cd "$ROOT" && pwd)"
+[ -d "$ROOT/.git" ] || die "kein Git-Repository: $ROOT"
+
+# Plausibilitaet: passt das Profil zum Projekt?
+MARKERS=$(python3 -c "
+import json,sys
+p=json.load(open('$PROFILE_JSON'))
+print(' '.join(p.get('detect_markers',[])))
+")
+hit=0
+for m in $MARKERS; do
+  if git -C "$ROOT" ls-files "$m" 2>/dev/null | grep -q . ; then hit=1; break; fi
+  [ -e "$ROOT/$m" ] && { hit=1; break; }
+done
+if [ "$hit" -eq 0 ]; then
+  echo "Warnung: typische Merkmale fuer '$PROFILE' nicht gefunden in $ROOT" >&2
+  ask go "Trotzdem fortfahren? [j/N]: "
+  case "$go" in j|J|y|Y) ;; *) die "abgebrochen" ;; esac
+fi
+
+NAME="$(basename "$ROOT")"
+STAMP="$(date +%Y-%m-%d)"
+OUT="${OUT:-$HOME/Desktop/audits/$NAME-$PROFILE-$STAMP}"
+OUT="${OUT/#\~/$HOME}"
+mkdir -p "$OUT" || die "kann Ausgabeordner nicht anlegen: $OUT"
+
+say "Projekt : $ROOT"
+say "Profil  : $PROFILE"
+say "Ausgabe : $OUT"
+say ""
+
+# --------------------------------------------------------- 1. Fakten erheben
+say "[1/5] Messbare Fakten erheben ..."
+python3 "$KIT/lib/collect.py" "$ROOT" "$PROFILE_JSON" "$OUT/facts.json" 2>/dev/null \
+  || die "Faktenerhebung fehlgeschlagen"
+python3 - "$OUT/facts.json" <<'PY'
+import json,sys
+d=json.load(open(sys.argv[1]))
+n=sum(v for v in d["counts"].values())
+print(f"      {d['files_scanned']} Dateien, {n} Fundstellen in {len([k for k,v in d['counts'].items() if v])} Mustern")
+PY
+
+# --------------------------------------------------------------- 2. Analyse
+say "[2/5] Analyse (dauert einige Minuten) ..."
+PROMPT_FILE="$OUT/.prompt.md"
+{
+  cat "$KIT/lib/analyze-prompt.md"
+  echo
+  echo "## PROFILE"
+  echo '```json'
+  cat "$PROFILE_JSON"
+  echo '```'
+  echo
+  echo "## facts.json"
+  echo '```json'
+  cat "$OUT/facts.json"
+  echo '```'
+} > "$PROMPT_FILE"
+
+MODEL_ARG=()
+[ -n "$MODEL" ] && MODEL_ARG=(--model "$MODEL")
+
+( cd "$ROOT" && claude -p "$(cat "$PROMPT_FILE")" "${MODEL_ARG[@]}" ) \
+  > "$OUT/.raw.txt" 2>"$OUT/.analyze.log" </dev/null
+rc=$?
+[ $rc -eq 0 ] || { echo "Analyse fehlgeschlagen (Code $rc), siehe $OUT/.analyze.log" >&2; exit 1; }
+
+python3 "$KIT/lib/extract_json.py" "$OUT/.raw.txt" "$OUT/findings.json" \
+  || { echo "Konnte kein JSON aus der Antwort lesen. Rohtext: $OUT/.raw.txt" >&2; exit 1; }
+
+# ------------------------------------------------------------ 3. Validieren
+say "[3/5] Belege pruefen ..."
+python3 "$KIT/lib/validate.py" "$OUT/findings.json" "$ROOT" \
+  || die "Validierung fehlgeschlagen, siehe oben"
+
+# ---------------------------------------------------------------- 4. Rendern
+say "[4/5] Bericht erzeugen ..."
+python3 "$KIT/lib/render.py" "$OUT/findings.json" "$OUT" || die "Rendern fehlgeschlagen"
+
+# -------------------------------------------------------------------- 4. PDF
+if [ "$NO_PDF" -eq 0 ]; then
+  say "[5/5] PDF ..."
+  CHROME=""
+  for c in "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+           "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser" \
+           "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" \
+           "/Applications/Chromium.app/Contents/MacOS/Chromium"; do
+    [ -x "$c" ] && { CHROME="$c"; break; }
+  done
+  if [ -n "$CHROME" ]; then
+    "$CHROME" --headless --disable-gpu --no-sandbox \
+      --print-to-pdf="$OUT/report.pdf" \
+      --no-pdf-header-footer \
+      "file://$OUT/report.html" >/dev/null 2>&1
+    [ -s "$OUT/report.pdf" ] || say "      PDF fehlgeschlagen, report.html bleibt nutzbar"
+  else
+    say "      kein Chromium-Browser gefunden, PDF uebersprungen"
+  fi
+else
+  say "[5/5] PDF uebersprungen"
+fi
+
+rm -f "$OUT/.prompt.md"
+
+say ""
+say "Fertig."
+for f in report.pdf report.md register.csv findings.json facts.json; do
+  [ -f "$OUT/$f" ] && say "  $OUT/$f"
+done
+say ""
+python3 - "$OUT/findings.json" <<'PY'
+import json,sys
+d=json.load(open(sys.argv[1]))
+iss=d.get("issues",[])
+c={}
+for i in iss: c[i.get("severity","?")]=c.get(i.get("severity","?"),0)+1
+lbl={"critical":"kritisch","high":"hoch","medium":"mittel","low":"niedrig"}
+parts=[f"{c[k]} {lbl.get(k,k)}" for k in ("critical","high","medium","low") if c.get(k)]
+print(f"  {len(iss)} Probleme: " + ", ".join(parts) if parts else "  keine Probleme gefunden")
+hl=d.get("summary",{}).get("headline")
+if hl: print(f"  {hl}")
+PY
+
+if [ "$OPEN" -eq 1 ]; then
+  [ -f "$OUT/report.pdf" ] && open "$OUT/report.pdf" || open "$OUT/report.md"
+fi
